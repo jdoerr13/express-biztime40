@@ -2,6 +2,7 @@ const express = require("express");
 const ExpressError = require("../expressError")
 const router = express.Router();
 const db = require("../db");
+const slugify = require('slugify');
 
 router.get('/', async (req, res, next) => {
     try {
@@ -11,6 +12,8 @@ router.get('/', async (req, res, next) => {
       return next(e);
     }
   })
+
+  //ONE TO MANY
   router.get('/:code', async (req, res, next) => {
     try {
       const { code } = req.params;
@@ -24,7 +27,11 @@ router.get('/', async (req, res, next) => {
   
       const company = companyResult.rows[0];
   
-      // Fetch invoices associated with the company
+      //  associated industries with company
+      const industriesResult = await db.query('SELECT i.industry FROM industries i JOIN company_industry ci ON i.code = ci.industry_code WHERE ci.company_code = $1', [code]);//given the code in the query list the industries matches the industry_code that matches the company_code (WHICH IS THE SAME AS THE CODE FROM THE COMPANTIES TABLE)
+      const industries = industriesResult.rows.map(row => row.industry);
+
+      //  invoices associated with company
       const invoicesResult = await db.query('SELECT id FROM invoices WHERE comp_code = $1', [code]);
       const invoices = invoicesResult.rows.map(row => row.id);
   
@@ -33,6 +40,7 @@ router.get('/', async (req, res, next) => {
         company: {
           code: company.code,
           name: company.name,
+          industries: industries,
           invoices: invoices,
         },
       };
@@ -57,17 +65,66 @@ router.get('/', async (req, res, next) => {
 //     }
 //   })
 
-  router.post('/', async (req, res, next) => {
-    try {
-      const { code, name, description } = req.body;
-      const results = await db.query('INSERT INTO companies (code, name, description) VALUES ($1, $2, $3) RETURNING code, name, description', [code, name, description]);
-      // console.log(results)
-      // return res.json(results.rows)
-      return res.status(201).json({ company: results.rows[0] })//201 MEAN CREATED
-    } catch (e) {
-      return next(e)
+
+router.post('/', async (req, res, next) => {
+  try {
+    const { name, description } = req.body;
+
+    // Generate the initial code from the name
+    const initialCode = slugify(name, { lower: true });
+
+    // Check if the initial code already exists
+    let existingCompany = await db.query('SELECT * FROM companies WHERE code = $1', [initialCode]);
+
+    // If the code already exists, append a counter to make it unique
+    let code = initialCode;
+    let counter = 1;
+
+    while (existingCompany.rows.length > 0) {
+      // Append a counter to the code to make it unique
+      code = `${initialCode}-${counter}`;
+      
+      // Check again for uniqueness
+      existingCompany = await db.query('SELECT * FROM companies WHERE code = $1', [code]);
+
+      // Increment the counter and try again
+      counter++;
     }
-  })
+
+    // Insert the company with the unique code
+    const results = await db.query('INSERT INTO companies (code, name, description) VALUES ($1, $2, $3) RETURNING code, name, description', [code, name, description]);
+
+    return res.status(201).json({ company: results.rows[0] });
+
+  } catch (e) {
+    return next(e);
+  }
+});
+
+//WITH SLUGIFY
+// router.post('/', async (req, res, next) => {
+//   try {
+//     const { name, description } = req.body;
+//     const code = slugify(name, { lower: true });
+//     const results = await db.query('INSERT INTO companies (code, name, description) VALUES ($1, $2, $3) RETURNING code, name, description', [code, name, description]);
+//     return res.status(201).json({ company: results.rows[0] });
+//   } catch (e) {
+//     return next(e);
+//   }
+// });
+
+//Original put
+  // router.post('/', async (req, res, next) => {
+  //   try {
+  //     const { code, name, description } = req.body;
+  //     const results = await db.query('INSERT INTO companies (code, name, description) VALUES ($1, $2, $3) RETURNING code, name, description', [code, name, description]);
+  //     // console.log(results)
+  //     // return res.json(results.rows)
+  //     return res.status(201).json({ company: results.rows[0] })//201 MEAN CREATED
+  //   } catch (e) {
+  //     return next(e)
+  //   }
+  // })
 
   router.put('/:code', async (req, res, next) => {
     try {
